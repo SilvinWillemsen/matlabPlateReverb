@@ -15,16 +15,16 @@
 
 %}
 
-classdef realTimePlateReverbPluginNew < audioPlugin
+classdef realTimePlateReverbPlugin < audioPlugin
     properties
         % Parameters that the user can interact with
         
         % Comment legend: Description, (unit), [minimum value - maximum value]
         
-        wetness = 50;       % Dry/Wetness, (%), [0 - 100] (dry signal - only effect)
+        wetness = 75;       % Dry/Wetness, (%), [0 - 100] (dry signal - only effect)
         Lx = 2;             % Plate Width, (m),  [1 - 3]
         Ly = 1;             % Plate Length, (m), [0.5 - 2]
-        cents = 5;          % Amount of cents between eigenmodes (Quality vs. Performance), (Cents), [0.01 - 10]
+        cents = 1;          % Amount of cents between eigenmodes (Quality vs. Performance), (Cents), [0.01 - 10]
                             
         physDamp = false;   % Physical Damping [off/on]
         flanging = false;   % Flanging [off/on]
@@ -129,7 +129,7 @@ classdef realTimePlateReverbPluginNew < audioPlugin
 %             'Mapping', {'enum', 'off', 'on'}), ...
     end
     methods
-        function plugin = realTimePlateReverbPluginNew        %<---
+        function plugin = realTimePlateReverbPlugin        %<---
             
         end   
         function out = process (plugin, in)
@@ -148,7 +148,7 @@ classdef realTimePlateReverbPluginNew < audioPlugin
                  plugin.omega, plugin.phiOutL, plugin.phiOutR, ...
                  plugin.phiOutLPre, plugin.phiOutRPre, ...
                  plugin.circXLength, plugin.rho, plugin.T60]...
-                    = initPlateNew (plugin.Lx, plugin.Ly, plugin.cents, ...
+                    = initPlate (plugin.Lx, plugin.Ly, plugin.cents, ...
                                  inOutputs, settings);
                 
                 plugin.qNext = zeros (length (plugin.omega (:, 1)), 1);

@@ -1,4 +1,4 @@
-function [coeffBdA, coeffCdA, coeffIndA, omega, phiOutL, phiOutR, phiOutLPre, phiOutRPre, circXLength, rho, cm] = initPlateNew (Lx, Ly, C, inOutputs, settings)
+function [coeffBdA, coeffCdA, coeffIndA, omega, phiOutL, phiOutR, phiOutLPre, phiOutRPre, circXLength, rho, cm] = initPlate (Lx, Ly, C, inOutputs, settings)
 %% Set Global Variables
 fs = 44100;
 ca = 343; % Speed of sound in air
