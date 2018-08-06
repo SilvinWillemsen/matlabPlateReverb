@@ -24,10 +24,10 @@ classdef realTimePlateReverbPlugin < audioPlugin
         wetness = 75;       % Dry/Wetness, (%), [0 - 100] (dry signal - only effect)
         Lx = 2;             % Plate Width, (m),  [1 - 3]
         Ly = 1;             % Plate Length, (m), [0.5 - 2]
-        cents = 5;          % Amount of cents between eigenmodes (Quality vs. Performance), (Cents), [0.01 - 10]
+        cents = 10;          % Amount of cents between eigenmodes (Quality vs. Performance), (Cents), [0.01 - 10]
                       
         physDamp = false;   % Physical Damping [off/on]
-        flanging = false;   % Flanging [off/on]
+        flanging = true;   % Flanging [off/on]
         LFO = false;        % LFO [off/on]
         init = true;        % (Re)Initialise variables
     end
@@ -61,9 +61,12 @@ classdef realTimePlateReverbPlugin < audioPlugin
         phiOutR = zeros (832, 1);
         
         % Matrix to save all possible output coefficients for the flanging effect
-        phiOutLPre = zeros (832, 22050);
-        phiOutRPre = zeros (832, 22050);
+        phiOutMat = zeros (832, 44100 / 4);
         
+        % X and Y positions for the dynamic outputs
+        circX = zeros (44100 / 4, 1);
+        circY = zeros (44100 / 4, 1);
+
         % QVectors used in the update equation
         qNext = zeros (832, 1);
         qNow =  zeros (832, 1);
@@ -77,12 +80,9 @@ classdef realTimePlateReverbPlugin < audioPlugin
         qR = [0.84 0.45];  % Right output position (x, y), [0 - 1]
         
         % Mode reduction techniques
-        square = true; 
+        square = false; 
         delModes = true;
         calcCents = true;
-        
-        tocCount = 0;
-        numLoops = 0;
         
     end
     properties (Constant)
@@ -136,8 +136,8 @@ classdef realTimePlateReverbPlugin < audioPlugin
             
         end   
         function out = process (plugin, in)
-            
             % Initialise the plugin
+%             tic
             if plugin.init == true
                 
                 % Create an vector including settings and in- and outputs
@@ -147,11 +147,11 @@ classdef realTimePlateReverbPlugin < audioPlugin
                 disp ('Initialising Plugin')
                 
                 % Obtain initial coefficients using the variables initialised above
+                % Note: always initialise with Lx = 2 and Ly = 1 so that flanging will work correctly
                 [plugin.coeffBdA, plugin.coeffCdA, plugin.coeffIndA, ...
                  plugin.omega, plugin.phiOutL, plugin.phiOutR, ...
-                 plugin.phiOutLPre, plugin.phiOutRPre, ...
-                 plugin.circXLength, plugin.rho, plugin.T60]...
-                    = initPlate (plugin.Lx, plugin.Ly, plugin.cents, ...
+                 plugin.phiOutMat, plugin.circXLength, plugin.rho, plugin.T60]...
+                    = initPlate (2, 1, plugin.cents, ...
                                  inOutputs, settings);
                 
                 plugin.qNext = zeros (length (plugin.omega (:, 1)), 1);
@@ -171,161 +171,157 @@ classdef realTimePlateReverbPlugin < audioPlugin
             % Initialise the stereo out-vector
             out = zeros (length (in), 2);
             
+            % Initialise new variables 
+            qNextPre =         plugin.qNext;
+            qNowPre =          plugin.qNow;
+            qPrevPre =         plugin.qPrev;
+            coeffBdAPre =      plugin.coeffBdA;
+            coeffCdAPre =      plugin.coeffCdA;
+            coeffIndAPre =     plugin.coeffIndA;
+            phiOutLPre =       plugin.phiOutL;
+            phiOutRPre =       plugin.phiOutR;
             
-            qNextLoop =         plugin.qNext;
-            qNowLoop =          plugin.qNow;
-            qPrevLoop =         plugin.qPrev;
-            coeffBdALoop =      plugin.coeffBdA;
-            coeffCdALoop =      plugin.coeffCdA;
-            coeffIndALoop =     plugin.coeffIndA;
-            phiOutLLoop =       plugin.phiOutL;
-            phiOutRLoop =       plugin.phiOutR;
+            M = plugin.lengthOmega;
+            pLoop = plugin.p;
+            qLLoop = plugin.qL;
+            qRLoop = plugin.qR;
+            kSquared = (2e11 * plugin.h^2) / (12 * plugin.rho * (1 - 0.3^2));
+            k = 1 / 44100;
+            LxSmoothUse = plugin.Lxpre;
+            LySmoothUse = plugin.Lypre;
             
-            if plugin.stretching == true
-                M = plugin.lengthOmega;
-                pLoop = plugin.p;
-                qLLoop = plugin.qL;
-                qRLoop = plugin.qR;
-                kSquared = 0.5833;
-                k = 1 / 44100;
-                LxSmoothUse = plugin.Lxpre;
-                LySmoothUse = plugin.Lypre;
-                
-                
-                sS = round (plugin.lengthOmega / 20);
-                
-                if abs (plugin.Lx - plugin.Lxpre) > 1 / sS
-                    if round (LxSmoothUse * sS) / sS > round (plugin.Lx * sS) / sS
-                        LxSmoothUse = LxSmoothUse - 1 / sS;
-                    else
-                        if round (LxSmoothUse * sS) / sS < round (plugin.Lx * sS) / sS
-                            LxSmoothUse = LxSmoothUse + 1 / sS;
-                        end
-                    end
-                else
-                    LxSmoothUse = plugin.Lx;
-                end
-                
-                if abs (plugin.Ly - plugin.Lypre) > 1 / sS
-                    if round (LySmoothUse * sS) / sS > round (plugin.Ly * sS) / sS
-                        LySmoothUse = LySmoothUse - 1 / sS;
-                    else
-                        if round (LySmoothUse * sS) / sS < round (plugin.Ly * sS) / sS
-                            LySmoothUse = LySmoothUse + 1 / sS;
-                        end
-                    end
-                else
-                    LySmoothUse = plugin.Ly;
-                end
-                plugin.Lxpre = LxSmoothUse;
-                plugin.Lypre = LySmoothUse;
-                
-                if plugin.LFO == true
-                    LxLoop = LxSmoothUse + (sin (2 * pi * plugin.currentSample / 44100) / 4);
-                else
-                    LxLoop = LxSmoothUse;
-                end
+            sS = round (plugin.lengthOmega / 20);
 
-                LyLoop = LySmoothUse;
-                omegaLoop = plugin.omega;
-                
-                phiOutLLoop = zeros (M, 1);
-                phiOutRLoop = zeros (M, 1);
-                coeffALoop = (1 / k^2) + ((12 .* (log(10) ./ 4)) / (plugin.rho * plugin.h * k));
-                coeffALoopAll = coeffALoop * plugin.rho * plugin.h;
-                
-                % Update all coefficients that depend on the stretching of the plate
-                omegaLoop (:, 1)= (((omegaLoop (:, 2) * pi) / LxLoop).^2 + ((omegaLoop (:, 3) * pi) / LyLoop).^2) * sqrt (kSquared);
-                coeffBdALoop (:, 1) = ((2 / k^2) - (omegaLoop (:, 1)).^2) ./ coeffALoop;
-                coeffIndALoop (:, 1) = ((4 / (LxLoop * LyLoop)) * sin (omegaLoop (:, 2) * pi * pLoop (1)) .* sin (omegaLoop (:, 3) * pi * pLoop (2))) ./ coeffALoopAll;
-                phiOutLLoop (:, 1) = (4 / (LxLoop * LyLoop)) * sin (omegaLoop (:, 2) * pi * qLLoop (1)) .* sin (omegaLoop (:, 3) * pi * qLLoop (2));
-                phiOutRLoop (:, 1) = (4 / (LxLoop * LyLoop)) * sin (omegaLoop (:, 2) * pi * qRLoop (1)) .* sin (omegaLoop (:, 3) * pi * qRLoop (2));
-                
-                
-                % Make sure that eigenfrequencies that are higher than the stability condition (2*fs) are ignored
-                index = zeros (M, 1);
-                i = 1;
-                
-                for m = 1 : M
-                    if omegaLoop (m, 1) < 44100 * 2 
-                        index (i) = m;
-                        i = i + 1;
-                    else
-                        index = index (1 : i - 1);
+            if abs (plugin.Lx - plugin.Lxpre) > 1 / sS
+                if round (LxSmoothUse * sS) / sS > round (plugin.Lx * sS) / sS
+                    LxSmoothUse = LxSmoothUse - 1 / sS;
+                else
+                    if round (LxSmoothUse * sS) / sS < round (plugin.Lx * sS) / sS
+                        LxSmoothUse = LxSmoothUse + 1 / sS;
                     end
                 end
-                plugin.omega = omegaLoop;
-                
-                if index(end) == 0
-                
-                end
-                
-                % Update the loop variables
-                qNextLoopInd =      qNextLoop(index);
-                qNowLoopInd =       qNowLoop(index);
-                qPrevLoopInd =      qPrevLoop(index);
-                coeffBdALoopInd =   coeffBdALoop(index);
-                coeffCdALoopInd =   coeffCdALoop(index);
-                coeffIndALoopInd =  coeffIndALoop(index);
-                phiOutLLoopInd =    phiOutLLoop(index);
-                phiOutRLoopInd =    phiOutRLoop(index);
             else
-                qNextLoopInd =      qNextLoop;
-                qNowLoopInd =       qNowLoop;
-                qPrevLoopInd =      qPrevLoop;
-                coeffBdALoopInd =   coeffBdALoop;
-                coeffCdALoopInd =   coeffCdALoop;
-                coeffIndALoopInd =  coeffIndALoop;
-                phiOutLLoopInd =    phiOutLLoop;
-                phiOutRLoopInd =    phiOutRLoop;
-                
-                index = [1 : plugin.lengthOmega]';
+                LxSmoothUse = plugin.Lx;
             end
-            phiOutLFlange = plugin.phiOutLPre;
-            phiOutRFlange = plugin.phiOutRPre;
+
+            if abs (plugin.Ly - plugin.Lypre) > 1 / sS
+                if round (LySmoothUse * sS) / sS > round (plugin.Ly * sS) / sS
+                    LySmoothUse = LySmoothUse - 1 / sS;
+                else
+                    if round (LySmoothUse * sS) / sS < round (plugin.Ly * sS) / sS
+                        LySmoothUse = LySmoothUse + 1 / sS;
+                    end
+                end
+            else
+                LySmoothUse = plugin.Ly;
+            end
+            plugin.Lxpre = LxSmoothUse;
+            plugin.Lypre = LySmoothUse;
+
+            if plugin.LFO == true
+                LxLoop = LxSmoothUse + (sin (2 * pi * plugin.currentSample / 44100) / 4);
+            else
+                LxLoop = LxSmoothUse;
+            end
+
+            LyLoop = LySmoothUse;
+            omegaLoop = plugin.omega;
+
+            % Disable stretching if flanging is true (done for speed)
+            if plugin.flanging == true
+                LxLoop = 2;
+                LyLoop = 1;
+            end
             
-            curSamp = plugin.currentSample;
-            lengthCircX = plugin.circXLength;
+            phiOutLPre = zeros (M, 1);
+            phiOutRPre = zeros (M, 1);
+            coeffAPre = (1 / k^2) + ((12 .* (log(10) ./ 4)) / (plugin.rho * plugin.h * k));
+            coeffAPreAll = coeffAPre * plugin.rho * plugin.h;
+
+            % Update all coefficients that depend on the stretching of the plate
+            omegaLoop (:, 1)= ((omegaLoop (:, 2) / LxLoop).^2 + (omegaLoop (:, 3) / LyLoop).^2) * sqrt (kSquared) * pi^2;
+            coeffBdAPre (:, 1) = ((2 / k^2) - (omegaLoop (:, 1)).^2) ./ coeffAPre;
+            coeffIndAPre (:, 1) = ((4 / (LxLoop * LyLoop)) * sin (omegaLoop (:, 2) * pi * pLoop (1)) .* sin (omegaLoop (:, 3) * pi * pLoop (2))) ./ coeffAPreAll;
+            phiOutLPre (:, 1) = (4 / (LxLoop * LyLoop)) * sin (omegaLoop (:, 2) * pi * qLLoop (1)) .* sin (omegaLoop (:, 3) * pi * qLLoop (2));
+            phiOutRPre (:, 1) = (4 / (LxLoop * LyLoop)) * sin (omegaLoop (:, 2) * pi * qRLoop (1)) .* sin (omegaLoop (:, 3) * pi * qRLoop (2));
+
+
+            % Make sure that eigenfrequencies that are higher than the stability condition (2*fs) are ignored
+            index = zeros (M, 1);
+            nonIncludeIdx = zeros (M, 1);
+            i = 1;
+            j = 1;
+            for m = 1 : M
+                if omegaLoop (m, 1) < 44100 * 2 
+                    index (i) = m;
+                    i = i + 1;
+                end
+            end
+            index = index (1 : i - 1);
+            plugin.omega = omegaLoop;
+
+            % Update the loop variables
+            qNextLoop =      qNextPre (index);
+            qNowLoop =       qNowPre (index);
+            qPrevLoop =      qPrevPre (index);
+            coeffBdALoop =   coeffBdAPre (index);
+            coeffCdALoop =   coeffCdAPre (index);
+            coeffIndALoop =  coeffIndAPre (index);
+            phiOutLLoop =    phiOutLPre (index);
+            phiOutRLoop =    phiOutRPre (index);
+
+%             if plugin.flanging == true
+                curSamp = plugin.currentSample;
+                lengthCircX = plugin.circXLength;
+                phiOutFlange = plugin.phiOutMat; 
+                
+%             end
+            
+%             divX =  omegaLoop (:, 2) * pi / LxLoop;                    
+%             divY =  omegaLoop (:, 3) * pi / LyLoop;
+%             scalar = (4 / (LxLoop * LyLoop));
+%             idx = floor (mod ((curSamp + (1:length(in))) / 2, lengthCircX) + 1);
+%             phiOutLoopPre = scalar *  sin (circXLoop (idx) .* divX) .* sin (circYLoop (idx) .* divY);
             
             % Update Equation
             for t = 1 : length(in)
                 if t == 1
-                    qNextLoopInd = (coeffBdALoopInd .* qNowLoopInd + coeffCdALoopInd .* qPrevLoopInd + coeffIndALoopInd .* plugin.samp);
+                    qNextLoop = (coeffBdALoop .* qNowLoop + coeffCdALoop .* qPrevLoop + coeffIndALoop .* plugin.samp);
                 else
-                    qNextLoopInd = (coeffBdALoopInd .* qNowLoopInd + coeffCdALoopInd .* qPrevLoopInd + coeffIndALoopInd .* in (t - 1, 1));
+                    qNextLoop = (coeffBdALoop .* qNowLoop + coeffCdALoop .* qPrevLoop + coeffIndALoop .* in (t - 1, 1));
                 end
-%                 plot(qNextLoopInd);
-%                 drawnow;
-                % If the flanging is turned on, find the correct vector
-                % from the phiOutPre matrices
+
                 
+                % If the flanging is turned on, find the correct vector from the phiOutPre matrices              
                 if plugin.flanging == true
-                    phiOutLLoopInd = phiOutLFlange (:, floor (mod ((curSamp + t) / 8, lengthCircX) + 1));
-                    phiOutRLoopInd = phiOutRFlange (:, floor (mod ((curSamp + t) / 16, lengthCircX) + 1));
+                    phiOutLLoop = phiOutFlange (:, floor (mod ((curSamp + t) / 32, lengthCircX) + 1));
+                    phiOutRLoop = phiOutFlange (:, floor (mod ((curSamp + t) / 64, lengthCircX) + 1));
+%                     phiOutLLoop = phiOutLoopPre (:, t);
+%                     phiOutRLoop = phiOutLLoop;
                 end
-%                 
-                out(t, 1) = plugin.wetness / 100 * 25000 * sum (qNextLoopInd .* phiOutLLoopInd) ...
+                
+                out(t, 1) = plugin.wetness / 100 * 25000 * sum (qNextLoop .* phiOutLLoop) ...
                     + (1 - plugin.wetness / 100) * in (t, 1);
-                out(t, 2) = plugin.wetness / 100 * 25000 * sum (qNextLoopInd .* phiOutRLoopInd) ...
+                out(t, 2) = plugin.wetness / 100 * 25000 * sum (qNextLoop .* phiOutRLoop) ...
                     + (1 - plugin.wetness / 100) * in (t, 1);
 
-                qPrevLoopInd = qNowLoopInd;
-                qNowLoopInd = qNextLoopInd;
+                qPrevLoop = qNowLoop;
+                qNowLoop = qNextLoop;
             end
             
             % Set the first sample in the next buffer to the last sample in the current buffer
             plugin.samp = in (end);
             
             % Save the QVectors for the next loop
-            plugin.qNext (index) =  qNextLoopInd;
-            plugin.qPrev (index) =  qPrevLoopInd;
-            plugin.qNow (index) =   qNowLoopInd;
+            plugin.qNext (index) =  qNextLoop;
+            plugin.qPrev (index) =  qPrevLoop;
+            plugin.qNow (index) =   qNowLoop;
             
             % Update the currentSample
             plugin.currentSample = plugin.currentSample + length (in (:, 1));
-           
+%             toc
         end
- 
+        
         function reset (plugin)
         end
         

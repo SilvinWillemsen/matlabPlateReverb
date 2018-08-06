@@ -1,4 +1,4 @@
-function [coeffBdA, coeffCdA, coeffIndA, omega, phiOutL, phiOutR, phiOutLPre, phiOutRPre, circXLength, rho, cm] = initPlate (Lx, Ly, C, inOutputs, settings)
+function [coeffBdA, coeffCdA, coeffIndA, omega, phiOutL, phiOutR, phiOutFlange, circXLength, rho, cm] = initPlate (Lx, Ly, C, inOutputs, settings)
 %% Set Global Variables
 fs = 44100;
 ca = 343; % Speed of sound in air
@@ -113,29 +113,34 @@ end
 %omega = sortrows(omega,1);
 if calcCent == 1
     disp('Calculate Cents')
-    omega = sortrows(omega,1);
+    omega = sortrows (omega, 1);
     n = 1;
     omegaPrev = 0;
     %C = 0.1;
     %omega(:,4) = ones(length(omega(:,1)),1);
-    ncent = nthroot(2,12)^(C/100)*(omega(1,1)/(2*pi))-omega(1,1)/(2*pi);
+    index = [1:length(omega(:, 1))]';
+    i = 1;
+    ncent = nthroot(2, 12)^(C / 100) * (omega(1, 1) / (2 * pi)) - omega(1, 1) / (2 * pi);
     while n < length(omega(:,1))
-        if omega(n,1)/(2*pi) - omegaPrev/(2*pi) < ncent
-            %omega(n-1,4) = omega(n-1,4) + 1;
+        if omega(n, 1) / (2 * pi) - omegaPrev / (2 * pi) < ncent
             omega(n,:) = [];
+            index(n) = [];
         else
-            omegaPrev = omega(n,1);
-            n = n+1;
-            ncent = nthroot(2,12)^(C/100)*(omega(n,1)/(2*pi))-omega(n,1)/(2*pi);
+            omegaPrev = omega(n, 1);
+            n = n + 1;
+            ncent = nthroot(2, 12)^(C / 100) * (omega(n, 1) / (2 * pi)) - omega(n, 1) / (2 * pi);
+            
         end 
+        i = i + 1;
     end
     %omega = sortrows(omega,[2,3]);
 end
+
 %omega = omega(1:1000,:);
-M = length(omega(:,1));
-phiIn = zeros(M,1);
+M = length(omega(:, 1));
+phiIn = zeros(M, 1);
 for m = 1:M
-    phiIn(m,1) = (4/(Lx*Ly))*sin((omega(m,2)*pi*in(1))/Lx)*sin((omega(m,3)*pi*in(2))/Ly);
+    phiIn(m, 1) = (4 / (Lx * Ly)) * sin((omega(m, 2) * pi * in(1)) / Lx) * sin((omega(m, 3) * pi * in(2)) / Ly);
     %phiIn2(m,1) = (4/(Lx*Ly))*sin((omega(m,2)*pi*in2(1))/Lx)*sin((omega(m,3)*pi*in2(2))/Ly);
 end
 
@@ -156,43 +161,29 @@ Sx = 4;
 Sy = 3;
 
 %Create possible output positions
-circX = outputPointsX (ceil (length (outputPointsX) * (Rx * sin (Sx * 2 * pi * (1 : 2 / (max([Lx Ly])) : fs) / fs) + 0.5)));
-circY = outputPointsY (ceil (length (outputPointsY) * (Ry * sin (Sy * 2 * pi * (1 : 2 / (max([Lx Ly])) : fs) / fs + 0.5 * pi) + 0.5)));
+circX = outputPointsX (ceil (length (outputPointsX) * (Rx * sin (Sx * 2 * pi * (1 : 2 / (max([Lx Ly])) : (fs / 4)) / (fs / 4)) + 0.5)));
+circY = outputPointsY (ceil (length (outputPointsY) * (Ry * sin (Sy * 2 * pi * (1 : 2 / (max([Lx Ly])) : (fs / 4)) / (fs / 4) + 0.5 * pi) + 0.5)));
 circXLength = length(circX);
 
 %% Create the Output Vector
-phiOutL = zeros(M,1);
-phiOutR = zeros(M, 1);
+
 disp('Create PhiOut')
 
-if flanging == 1
-    phiOutLPre = zeros (M, length(circX));
-    phiOutRPre = zeros (M, length(circX));
-    
-    for t = 1 : length(circX)
-        for m = 1 : M
-            phiOutLPre (m, t) = (4 / (Lx * Ly)) * sin ((omega (m, 2) * pi * circX(t)) / Lx) * sin ((omega (m, 3) * pi * circY(t)) / Ly);
-            phiOutRPre (m, t) = (4 / (Lx * Ly)) * sin ((omega (m, 2) * pi * circX(t)) / Lx) * sin ((omega (m, 3) * pi * circY(t)) / Ly);
-        end
-    end
-    
-else
-    phiOutLPre = zeros (M, length(circX));
-    phiOutRPre = zeros (M, length(circX));
-end
-for m = 1 : M
-    phiOutL (m, 1) = (4 / (Lx * Ly)) * sin ((omega (m, 2) * pi * qL(1) * Lx) / Lx) * sin ((omega (m, 3) * pi * qL(2) * Ly) / Ly);
-    phiOutR (m, 1) = (4 / (Lx * Ly)) * sin ((omega (m, 2) * pi * qR(1) * Lx) / Lx) * sin ((omega (m, 3) * pi * qR(2) * Ly) / Ly);
-end
 
+phiOutFlange = (4 / (Lx * Ly)) * sin ((omega (:, 2) * pi * circX) / Lx) .* sin ((omega (:, 3) * pi * circY) / Ly);    
+
+phiOutL = (4 / (Lx * Ly)) * sin (omega (:, 2) * pi * qL(1)) .* sin (omega (:, 3) * pi * qL(2));
+phiOutR = (4 / (Lx * Ly)) * sin (omega (:, 2) * pi * qR(1)) .* sin (omega (:, 3) * pi * qR(2));
+
+
+%% Calculate thermoelastic damping
 if useCm == true
-    %% Calculate thermoelastic damping
-
-    %Set thermal coefficients
+    
+    % Set thermal coefficients
     R1 = 4.94e-3;
     C1 = 2.98e-4;
 
-    %Calculate damping coefficient
+    % Calculate damping coefficient
     n1 = (omega(:,1)*R1*C1) ./ ((omega(:,1).^2*h^2)+((C1^2)/(h^2)));
     alphaTH = (omega(:,1) / 2).*n1;
 
