@@ -248,9 +248,7 @@ classdef realTimePlateReverbPlugin < audioPlugin
 
             % Make sure that eigenfrequencies that are higher than the stability condition (2*fs) are ignored
             index = zeros (M, 1);
-            nonIncludeIdx = zeros (M, 1);
             i = 1;
-            j = 1;
             for m = 1 : M
                 if omegaLoop (m, 1) < 44100 * 2 
                     index (i) = m;
@@ -273,7 +271,7 @@ classdef realTimePlateReverbPlugin < audioPlugin
 %             if plugin.flanging == true
                 curSamp = plugin.currentSample;
                 lengthCircX = plugin.circXLength;
-                phiOutFlange = plugin.phiOutMat; 
+%                 phiOutFlange = plugin.phiOutMat; 
                 
 %             end
             
@@ -294,10 +292,10 @@ classdef realTimePlateReverbPlugin < audioPlugin
                 
                 % If the flanging is turned on, find the correct vector from the phiOutPre matrices              
                 if plugin.flanging == true
-                    phiOutLLoop = phiOutFlange (:, floor (mod ((curSamp + t) / 32, lengthCircX) + 1));
-                    phiOutRLoop = phiOutFlange (:, floor (mod ((curSamp + t) / 64, lengthCircX) + 1));
-%                     phiOutLLoop = phiOutLoopPre (:, t);
-%                     phiOutRLoop = phiOutLLoop;
+                    phiOutLLoop = plugin.phiOutMat (:, floor (mod ((curSamp + t) / 128, lengthCircX) + 1));
+                    phiOutRLoop = plugin.phiOutMat (:, floor (mod ((curSamp + t) / 64, lengthCircX) + 1));
+% %                     phiOutLLoop = phiOutLoopPre (:, t);
+% %                     phiOutRLoop = phiOutLLoop;
                 end
                 
                 out(t, 1) = plugin.wetness / 100 * 25000 * sum (qNextLoop .* phiOutLLoop) ...

@@ -157,7 +157,7 @@ Rx = 0.4;
 Ry = 0.4;
 
 %set x and y speeds
-Sx = 4;
+Sx = 2;
 Sy = 3;
 
 %Create possible output positions
