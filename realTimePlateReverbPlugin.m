@@ -21,13 +21,13 @@ classdef realTimePlateReverbPlugin < audioPlugin
         
         % Comment legend: Description, (unit), [minimum value - maximum value]
         
-        wetness = 75;       % Dry/Wetness, (%), [0 - 100] (dry signal - only effect)
+        wetness = 100;       % Dry/Wetness, (%), [0 - 100] (dry signal - only effect)
         Lx = 2;             % Plate Width, (m),  [1 - 3]
         Ly = 1;             % Plate Length, (m), [0.5 - 2]
-        cents = 10;          % Amount of cents between eigenmodes (Quality vs. Performance), (Cents), [0.01 - 10]
+        cents = 5;          % Amount of cents between eigenmodes (Quality vs. Performance), (Cents), [0.01 - 10]
                       
         physDamp = false;   % Physical Damping [off/on]
-        flanging = true;   % Flanging [off/on]
+        flanging = false;   % Flanging [off/on]
         LFO = false;        % LFO [off/on]
         init = true;        % (Re)Initialise variables
     end
@@ -83,6 +83,9 @@ classdef realTimePlateReverbPlugin < audioPlugin
         square = false; 
         delModes = true;
         calcCents = true;
+        
+        % Scaling the output
+        scaling = (2 * 1)^-0.25 * 50000;
         
     end
     properties (Constant)
@@ -228,10 +231,10 @@ classdef realTimePlateReverbPlugin < audioPlugin
             omegaLoop = plugin.omega;
 
             % Disable stretching if flanging is true (done for speed)
-            if plugin.flanging == true
-                LxLoop = 2;
-                LyLoop = 1;
-            end
+%             if plugin.flanging == true
+%                 LxLoop = 2;
+%                 LyLoop = 1;
+%             end
             
             phiOutLPre = zeros (M, 1);
             phiOutRPre = zeros (M, 1);
@@ -241,9 +244,9 @@ classdef realTimePlateReverbPlugin < audioPlugin
             % Update all coefficients that depend on the stretching of the plate
             omegaLoop (:, 1)= ((omegaLoop (:, 2) / LxLoop).^2 + (omegaLoop (:, 3) / LyLoop).^2) * sqrt (kSquared) * pi^2;
             coeffBdAPre (:, 1) = ((2 / k^2) - (omegaLoop (:, 1)).^2) ./ coeffAPre;
-            coeffIndAPre (:, 1) = ((4 / (LxLoop * LyLoop)) * sin (omegaLoop (:, 2) * pi * pLoop (1)) .* sin (omegaLoop (:, 3) * pi * pLoop (2))) ./ coeffAPreAll;
-            phiOutLPre (:, 1) = (4 / (LxLoop * LyLoop)) * sin (omegaLoop (:, 2) * pi * qLLoop (1)) .* sin (omegaLoop (:, 3) * pi * qLLoop (2));
-            phiOutRPre (:, 1) = (4 / (LxLoop * LyLoop)) * sin (omegaLoop (:, 2) * pi * qRLoop (1)) .* sin (omegaLoop (:, 3) * pi * qRLoop (2));
+            coeffIndAPre (:, 1) = (sin (omegaLoop (:, 2) * pi * pLoop (1)) .* sin (omegaLoop (:, 3) * pi * pLoop (2))) ./ coeffAPreAll;
+            phiOutLPre (:, 1) = sin (omegaLoop (:, 2) * pi * qLLoop (1)) .* sin (omegaLoop (:, 3) * pi * qLLoop (2));
+            phiOutRPre (:, 1) = sin (omegaLoop (:, 2) * pi * qRLoop (1)) .* sin (omegaLoop (:, 3) * pi * qRLoop (2));
 
 
             % Make sure that eigenfrequencies that are higher than the stability condition (2*fs) are ignored
@@ -267,6 +270,8 @@ classdef realTimePlateReverbPlugin < audioPlugin
             coeffIndALoop =  coeffIndAPre (index);
             phiOutLLoop =    phiOutLPre (index);
             phiOutRLoop =    phiOutRPre (index);
+            
+            plugin.scaling = (LxLoop * LyLoop)^-0.25 * 50000;
 
 %             if plugin.flanging == true
                 curSamp = plugin.currentSample;
@@ -292,15 +297,15 @@ classdef realTimePlateReverbPlugin < audioPlugin
                 
                 % If the flanging is turned on, find the correct vector from the phiOutPre matrices              
                 if plugin.flanging == true
-                    phiOutLLoop = plugin.phiOutMat (:, floor (mod ((curSamp + t) / 128, lengthCircX) + 1));
-                    phiOutRLoop = plugin.phiOutMat (:, floor (mod ((curSamp + t) / 64, lengthCircX) + 1));
+                    phiOutLLoop = plugin.phiOutMat (index, floor (mod ((curSamp + t) / 128, lengthCircX) + 1));
+                    phiOutRLoop = plugin.phiOutMat (index, floor (mod ((curSamp + t) / 64, lengthCircX) + 1));
 % %                     phiOutLLoop = phiOutLoopPre (:, t);
 % %                     phiOutRLoop = phiOutLLoop;
                 end
                 
-                out(t, 1) = plugin.wetness / 100 * 25000 * sum (qNextLoop .* phiOutLLoop) ...
+                out(t, 1) = plugin.wetness / 100 * plugin.scaling * sum (qNextLoop .* phiOutLLoop) ...
                     + (1 - plugin.wetness / 100) * in (t, 1);
-                out(t, 2) = plugin.wetness / 100 * 25000 * sum (qNextLoop .* phiOutRLoop) ...
+                out(t, 2) = plugin.wetness / 100 * plugin.scaling * sum (qNextLoop .* phiOutRLoop) ...
                     + (1 - plugin.wetness / 100) * in (t, 1);
 
                 qPrevLoop = qNowLoop;

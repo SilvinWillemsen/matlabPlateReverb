@@ -140,7 +140,7 @@ end
 M = length(omega(:, 1));
 phiIn = zeros(M, 1);
 for m = 1:M
-    phiIn(m, 1) = (4 / (Lx * Ly)) * sin((omega(m, 2) * pi * in(1)) / Lx) * sin((omega(m, 3) * pi * in(2)) / Ly);
+    phiIn(m, 1) = (2 / (Lx * Ly)) * sin((omega(m, 2) * pi * in(1)) / Lx) * sin((omega(m, 3) * pi * in(2)) / Ly);
     %phiIn2(m,1) = (4/(Lx*Ly))*sin((omega(m,2)*pi*in2(1))/Lx)*sin((omega(m,3)*pi*in2(2))/Ly);
 end
 
@@ -170,10 +170,10 @@ circXLength = length(circX);
 disp('Create PhiOut')
 
 
-phiOutFlange = (4 / (Lx * Ly)) * sin ((omega (:, 2) * pi * circX) / Lx) .* sin ((omega (:, 3) * pi * circY) / Ly);    
+phiOutFlange = sin ((omega (:, 2) * pi * circX) / Lx) .* sin ((omega (:, 3) * pi * circY) / Ly);    
 
-phiOutL = (4 / (Lx * Ly)) * sin (omega (:, 2) * pi * qL(1)) .* sin (omega (:, 3) * pi * qL(2));
-phiOutR = (4 / (Lx * Ly)) * sin (omega (:, 2) * pi * qR(1)) .* sin (omega (:, 3) * pi * qR(2));
+phiOutL = sin (omega (:, 2) * pi * qL(1)) .* sin (omega (:, 3) * pi * qL(2));
+phiOutR = sin (omega (:, 2) * pi * qR(1)) .* sin (omega (:, 3) * pi * qR(2));
 
 
 %% Calculate thermoelastic damping
