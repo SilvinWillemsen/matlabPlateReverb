@@ -1,4 +1,4 @@
-function [coeffBdA, coeffCdA, coeffIndA, omega, phiOutL, phiOutR, phiOutFlange, circXLength, rho, cm] = initPlate (Lx, Ly, C, inOutputs, settings)
+function [coeffBdA, coeffCdA, coeffIndA, omega, phiOutL, phiOutR, phiOutFlange, circXLength, rho, cm, circX, circY] = initPlate (Lx, Ly, C, inOutputs, settings)
 %% Set Global Variables
 fs = 44100;
 ca = 343; % Speed of sound in air
@@ -10,6 +10,7 @@ square =        settings (2);
 calcCent =      settings (3);
 flanging =      settings (4);
 useCm =         settings (5);
+flangeMatSize = settings (6);
 
 decay = 4;
 
@@ -147,30 +148,28 @@ end
 %% Set up Moving Outputs
 
 disp('Set up Moving Outputs')
-outputPointsX = 0:1/(10000*Lx):1;
-outputPointsY = 0:1/(10000*Ly):1;
-outputPointsX = outputPointsX*Lx;
-outputPointsY = outputPointsY*Ly;
+% outputPointsX = 0:1/(10000*Lx):1;
+% outputPointsY = 0:1/(10000*Ly):1;
+% outputPointsX = outputPointsX*Lx;
+% outputPointsY = outputPointsY*Ly;
 
 %set shape extremes
 Rx = 0.4;
 Ry = 0.4;
 
 %set x and y speeds
-Sx = 2;
+Sx = 4;
 Sy = 3;
 
 %Create possible output positions
-circX = outputPointsX (ceil (length (outputPointsX) * (Rx * sin (Sx * 2 * pi * (1 : 2 / (max([Lx Ly])) : (fs / 4)) / (fs / 4)) + 0.5)));
-circY = outputPointsY (ceil (length (outputPointsY) * (Ry * sin (Sy * 2 * pi * (1 : 2 / (max([Lx Ly])) : (fs / 4)) / (fs / 4) + 0.5 * pi) + 0.5)));
+circX = Rx * sin (Sx * 2 * pi * (1 : 2 / (max([Lx Ly])) : (flangeMatSize)) / (flangeMatSize)) + 0.5;
+circY = Ry * sin (Sy * 2 * pi * (1 : 2 / (max([Lx Ly])) : (flangeMatSize)) / (flangeMatSize) + 0.5 * pi) + 0.5;
 circXLength = length(circX);
 
 %% Create the Output Vector
 
 disp('Create PhiOut')
-
-
-phiOutFlange = sin ((omega (:, 2) * pi * circX) / Lx) .* sin ((omega (:, 3) * pi * circY) / Ly);    
+phiOutFlange = sin (omega (:, 2) * pi * circX) .* sin (omega (:, 3) * pi * circY);    
 
 phiOutL = sin (omega (:, 2) * pi * qL(1)) .* sin (omega (:, 3) * pi * qL(2));
 phiOutR = sin (omega (:, 2) * pi * qR(1)) .* sin (omega (:, 3) * pi * qR(2));

@@ -21,24 +21,22 @@ classdef realTimePlateReverbPlugin < audioPlugin
         
         % Comment legend: Description, (unit), [minimum value - maximum value]
         
-        wetness = 100;       % Dry/Wetness, (%), [0 - 100] (dry signal - only effect)
+        wetness = 75;       % Dry/Wetness, (%), [0 - 100] (dry signal - only effect)
         Lx = 2;             % Plate Width, (m),  [1 - 3]
         Ly = 1;             % Plate Length, (m), [0.5 - 2]
         cents = 5;          % Amount of cents between eigenmodes (Quality vs. Performance), (Cents), [0.01 - 10]
-                      
-        physDamp = false;   % Physical Damping [off/on]
-        flanging = false;   % Flanging [off/on]
-        LFO = false;        % LFO [off/on]
-        init = true;        % (Re)Initialise variables
+           
+        speed = 4;
+        stretchFlange = false;  % Enable stretching and flanging simultaneously (when disabled, speed goes up)
+        physDamp = false;       % Physical Damping [off/on]
+        flanging = true;        % Flanging [off/on]
+        init = false;            % (Re)Initialise variables
     end
     properties (Access = private)
         
         % Parameters that the user can't interact with
         
-        currentSample = 0; % Used for time-variant processes (LFO and flanging)
         circXLength = 0;
-        LxSmooth = false;
-        LySmooth = false;
         Lxpre = 2;
         Lypre = 1;
         T60 = 4;    %
@@ -46,31 +44,32 @@ classdef realTimePlateReverbPlugin < audioPlugin
         h = 0.0005; % Plate thickness (m)
         
         stretching = true;  % Plate stretching [off/on]
-        lengthOmega = 832; % Number of eigenfrequencies
-        omega = zeros (832, 3); % Eigenfrequencies. Col 1: frequency, 
+        lengthOmega = 2; % Number of eigenfrequencies
+        omega = zeros (2, 3); % Eigenfrequencies. Col 1: frequency, 
                                                   % Col 2, horizontal modal index,
                                                   % Col 3, vertical modal index
         
         % Coefficients used in the update equation                                     
-        coeffBdA = zeros (832, 1);
-        coeffCdA = zeros (832, 1);
-        coeffIndA = zeros (832, 1)
+        coeffBdA = zeros (2, 1);
+        coeffCdA = zeros (2, 1);
+        coeffIndA = zeros (2, 1)
         
         % Vectors to save the output coefficients for the 
-        phiOutL = zeros (832, 1);
-        phiOutR = zeros (832, 1);
+        phiOutL = zeros (2, 1);
+        phiOutR = zeros (2, 1);
         
         % Matrix to save all possible output coefficients for the flanging effect
-        phiOutMat = zeros (832, 44100 / 4);
+        flangeMatSize = 88200;
+        phiOutMat = zeros (1209, 88200);
         
         % X and Y positions for the dynamic outputs
-        circX = zeros (44100 / 4, 1);
-        circY = zeros (44100 / 4, 1);
+        circX = zeros (88200, 1);
+        circY = zeros (88200, 1);
 
         % QVectors used in the update equation
-        qNext = zeros (832, 1);
-        qNow =  zeros (832, 1);
-        qPrev = zeros (832, 1);
+        qNext = zeros (2, 1);
+        qNow =  zeros (2, 1);
+        qPrev = zeros (2, 1);
         
         % Save the last sample of a buffer to use in the next buffer
         samp = 0;
@@ -86,6 +85,8 @@ classdef realTimePlateReverbPlugin < audioPlugin
         
         % Scaling the output
         scaling = (2 * 1)^-0.25 * 50000;
+        
+        flangeIdx = 0;
         
     end
     properties (Constant)
@@ -113,14 +114,21 @@ classdef realTimePlateReverbPlugin < audioPlugin
             'DisplayName', 'Flanging', ...
             'Label', 'off/on', ...
             'Mapping', {'enum', 'off', 'on'}), ...
-        audioPluginParameter ('LFO', ...
-            'DisplayName', 'LFO Stretch', ...
+        audioPluginParameter ('speed', ...
+            'DisplayName', 'Flanging Speed', ...
+            'Mapping', {'lin', 1, 10}), ...
+        audioPluginParameter ('stretchFlange', ...
+            'DisplayName', 'Stretch + Flange', ...
             'Label', 'off/on', ...
             'Mapping', {'enum', 'off', 'on'}), ...
         audioPluginParameter ('init', ...
             'DisplayName', 'Re-initialise', ...
             'Label', 'Click twice', ...
             'Mapping', {'enum', 'off', 'on'}))
+%         audioPluginParameter ('LFO', ...
+%             'DisplayName', 'LFO Stretch', ...
+%             'Label', 'off/on', ...
+%             'Mapping', {'enum', 'off', 'on'}), ...
 %         audioPluginParameter ('stretching', ...
 %             'DisplayName', 'Stretching', ...
 %             'Label', 'off/on', ...
@@ -136,16 +144,13 @@ classdef realTimePlateReverbPlugin < audioPlugin
     end
     methods
         function plugin = realTimePlateReverbPlugin        %<---
-            
-        end   
-        function out = process (plugin, in)
-            % Initialise the plugin
-%             tic
-            if plugin.init == true
-                
-                % Create an vector including settings and in- and outputs
+            initialise (plugin);
+        end 
+        
+        function initialise (plugin)
+            % Create an vector including settings and in- and outputs
                 settings = [plugin.delModes plugin.square plugin.calcCents ...
-                           plugin.flanging plugin.physDamp];
+                           plugin.flanging plugin.physDamp plugin.flangeMatSize];
                 inOutputs = [plugin.p; plugin.qL; plugin.qR];
                 disp ('Initialising Plugin')
                 
@@ -153,7 +158,8 @@ classdef realTimePlateReverbPlugin < audioPlugin
                 % Note: always initialise with Lx = 2 and Ly = 1 so that flanging will work correctly
                 [plugin.coeffBdA, plugin.coeffCdA, plugin.coeffIndA, ...
                  plugin.omega, plugin.phiOutL, plugin.phiOutR, ...
-                 plugin.phiOutMat, plugin.circXLength, plugin.rho, plugin.T60]...
+                 plugin.phiOutMat, plugin.circXLength, plugin.rho, plugin.T60, ...
+                 plugin.circX, plugin.circY]...
                     = initPlate (2, 1, plugin.cents, ...
                                  inOutputs, settings);
                 
@@ -169,6 +175,12 @@ classdef realTimePlateReverbPlugin < audioPlugin
                 
                 % Set the init variable to false
                 plugin.init = false;
+        end
+        function out = process (plugin, in)
+            % Initialise the plugin
+%             tic
+            if plugin.init == true
+                initialise (plugin);
             end
             
             % Initialise the stereo out-vector
@@ -181,8 +193,6 @@ classdef realTimePlateReverbPlugin < audioPlugin
             coeffBdAPre =      plugin.coeffBdA;
             coeffCdAPre =      plugin.coeffCdA;
             coeffIndAPre =     plugin.coeffIndA;
-            phiOutLPre =       plugin.phiOutL;
-            phiOutRPre =       plugin.phiOutR;
             
             M = plugin.lengthOmega;
             pLoop = plugin.p;
@@ -220,21 +230,15 @@ classdef realTimePlateReverbPlugin < audioPlugin
             end
             plugin.Lxpre = LxSmoothUse;
             plugin.Lypre = LySmoothUse;
-
-            if plugin.LFO == true
-                LxLoop = LxSmoothUse + (sin (2 * pi * plugin.currentSample / 44100) / 4);
-            else
-                LxLoop = LxSmoothUse;
-            end
-
+            LxLoop = LxSmoothUse;
             LyLoop = LySmoothUse;
             omegaLoop = plugin.omega;
 
-            % Disable stretching if flanging is true (done for speed)
-%             if plugin.flanging == true
-%                 LxLoop = 2;
-%                 LyLoop = 1;
-%             end
+%             Disable stretching if flanging is true (for speed)
+            if plugin.stretchFlange == false && plugin.flanging == true
+                LxLoop = 2;
+                LyLoop = 1;
+            end
             
             phiOutLPre = zeros (M, 1);
             phiOutRPre = zeros (M, 1);
@@ -271,20 +275,11 @@ classdef realTimePlateReverbPlugin < audioPlugin
             phiOutLLoop =    phiOutLPre (index);
             phiOutRLoop =    phiOutRPre (index);
             
-            plugin.scaling = (LxLoop * LyLoop)^-0.25 * 50000;
-
-%             if plugin.flanging == true
-                curSamp = plugin.currentSample;
-                lengthCircX = plugin.circXLength;
-%                 phiOutFlange = plugin.phiOutMat; 
+            plugin.scaling = (LxLoop * LyLoop)^-0.25 * 50000; 
                 
 %             end
-            
-%             divX =  omegaLoop (:, 2) * pi / LxLoop;                    
-%             divY =  omegaLoop (:, 3) * pi / LyLoop;
-%             scalar = (4 / (LxLoop * LyLoop));
-%             idx = floor (mod ((curSamp + (1:length(in))) / 2, lengthCircX) + 1);
-%             phiOutLoopPre = scalar *  sin (circXLoop (idx) .* divX) .* sin (circYLoop (idx) .* divY);
+            % The value by which the flangeIndex will increment. Depends on the speed variable.   
+            flangeIncVal = (plugin.flangeMatSize / 44100) / (128 * (1 - log10 (plugin.speed) + (1 / 64)));
             
             % Update Equation
             for t = 1 : length(in)
@@ -297,10 +292,17 @@ classdef realTimePlateReverbPlugin < audioPlugin
                 
                 % If the flanging is turned on, find the correct vector from the phiOutPre matrices              
                 if plugin.flanging == true
-                    phiOutLLoop = plugin.phiOutMat (index, floor (mod ((curSamp + t) / 128, lengthCircX) + 1));
-                    phiOutRLoop = plugin.phiOutMat (index, floor (mod ((curSamp + t) / 64, lengthCircX) + 1));
-% %                     phiOutLLoop = phiOutLoopPre (:, t);
-% %                     phiOutRLoop = phiOutLLoop;
+                    
+                    plugin.flangeIdx = plugin.flangeIdx + flangeIncVal;
+                    
+                    if plugin.stretchFlange == true
+                        phiOutLLoop = plugin.phiOutMat (index, floor (mod (plugin.flangeIdx, plugin.circXLength) + 1));
+                        phiOutRLoop = plugin.phiOutMat (index, floor (mod (plugin.flangeIdx / 2, plugin.circXLength) + 1));
+                    else
+                        phiOutLLoop = plugin.phiOutMat (:, floor (mod (plugin.flangeIdx, plugin.circXLength) + 1));
+                        phiOutRLoop = plugin.phiOutMat (:, floor (mod (plugin.flangeIdx / 2, plugin.circXLength) + 1));
+                    end
+
                 end
                 
                 out(t, 1) = plugin.wetness / 100 * plugin.scaling * sum (qNextLoop .* phiOutLLoop) ...
@@ -312,6 +314,8 @@ classdef realTimePlateReverbPlugin < audioPlugin
                 qNowLoop = qNextLoop;
             end
             
+%             disp(floor (mod ((curSamp + t), lengthCircX)));
+            
             % Set the first sample in the next buffer to the last sample in the current buffer
             plugin.samp = in (end);
             
@@ -320,9 +324,17 @@ classdef realTimePlateReverbPlugin < audioPlugin
             plugin.qPrev (index) =  qPrevLoop;
             plugin.qNow (index) =   qNowLoop;
             
-            % Update the currentSample
-            plugin.currentSample = plugin.currentSample + length (in (:, 1));
-%             toc
+           
+%             if mod (plugin.currentSample, 10 * length ( in (:, 1)))  < 10
+% %                 clf;
+% %                 hold on;
+%                 scatter ([plugin.circX(floor(mod(plugin.flangeIdx, lengthCircX) + 1)) plugin.circX(floor(mod(plugin.flangeIdx / 2, lengthCircX) + 1)) plugin.p(1)], ... 
+%                 [plugin.circY(floor(mod(plugin.flangeIdx, lengthCircX) + 1)) plugin.circY(floor(mod(plugin.flangeIdx / 2, lengthCircX) + 1)) plugin.p(2)]);            
+% %                 plot (plugin.circX, plugin.circY);
+%                 xlim ([0 1]);
+%                 ylim ([0 1]);
+%                 drawnow;
+%             end
         end
         
         function reset (plugin)
