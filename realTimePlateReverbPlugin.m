@@ -13,6 +13,8 @@
     In addition to this, this plugin add the option to move the microphones
     in Lissajous-figures over the plate, creating a flanging-like effect.
 
+    Additional instructions: 
+    If many samples are underrun, close the audioTestBench and 'clear all'.
 %}
 
 classdef realTimePlateReverbPlugin < audioPlugin
@@ -26,19 +28,18 @@ classdef realTimePlateReverbPlugin < audioPlugin
         Ly = 1;             % Plate Length, (m), [0.5 - 2]
         cents = 5;          % Amount of cents between eigenmodes (Quality vs. Performance), (Cents), [0.01 - 10]
            
-        speed = 4;
-        stretchFlange = false;  % Enable stretching and flanging simultaneously (when disabled, speed goes up)
-        physDamp = false;       % Physical Damping [off/on]
-        flanging = true;        % Flanging [off/on]
-        init = false;            % (Re)Initialise variables
+        speed = 0.33;       % Speed of the flanging (Revolutions^-3 / s), [0.1 - 1]
+        physDamp = false;   % Physical Damping [off/on]
+        flanging = true;    % Flanging [off/on]
+        init = false;       % (Re)Initialise variables
     end
     properties (Access = private)
         
         % Parameters that the user can't interact with
         
         circXLength = 0;
-        Lxpre = 2;
-        Lypre = 1;
+        curLx = 2;
+        curLy = 1;
         T60 = 4;    %
         rho = 7850; % Material density 
         h = 0.0005; % Plate thickness (m)
@@ -59,12 +60,12 @@ classdef realTimePlateReverbPlugin < audioPlugin
         phiOutR = zeros (2, 1);
         
         % Matrix to save all possible output coefficients for the flanging effect
-        flangeMatSize = 88200;
-        phiOutMat = zeros (1209, 88200);
+        flangeMatSize = 44100;
+        phiOutMat = zeros (1206, 44100);
         
         % X and Y positions for the dynamic outputs
-        circX = zeros (88200, 1);
-        circY = zeros (88200, 1);
+        circX = zeros (44100, 1);
+        circY = zeros (44100, 1);
 
         % QVectors used in the update equation
         qNext = zeros (2, 1);
@@ -84,9 +85,13 @@ classdef realTimePlateReverbPlugin < audioPlugin
         calcCents = true;
         
         % Scaling the output
-        scaling = (2 * 1)^-0.25 * 50000;
+        scaling = (2 * 1)^-0.25 * 150000;
         
         flangeIdx = 0;
+        
+        index = zeros (2, 1);
+        
+        wetnessLoop = 75;
         
     end
     properties (Constant)
@@ -107,8 +112,7 @@ classdef realTimePlateReverbPlugin < audioPlugin
             'Label', 'm', ...
             'Mapping', {'lin', 0.5, 2}), ...
         audioPluginParameter ('cents', ...
-            'DisplayName', 'Cents', ...
-            'Label', 'cents', ...
+            'DisplayName', 'Quality', ...
             'Mapping', {'lin', 0.01, 10}), ...
         audioPluginParameter ('flanging', ...
             'DisplayName', 'Flanging', ...
@@ -116,53 +120,31 @@ classdef realTimePlateReverbPlugin < audioPlugin
             'Mapping', {'enum', 'off', 'on'}), ...
         audioPluginParameter ('speed', ...
             'DisplayName', 'Flanging Speed', ...
-            'Mapping', {'lin', 1, 10}), ...
-        audioPluginParameter ('stretchFlange', ...
-            'DisplayName', 'Stretch + Flange', ...
-            'Label', 'off/on', ...
-            'Mapping', {'enum', 'off', 'on'}), ...
+            'Label', 'Rev / s', ...
+            'Mapping', {'lin', 0.1, 1}), ...
         audioPluginParameter ('init', ...
             'DisplayName', 'Re-initialise', ...
             'Label', 'Click twice', ...
             'Mapping', {'enum', 'off', 'on'}))
-%         audioPluginParameter ('LFO', ...
-%             'DisplayName', 'LFO Stretch', ...
-%             'Label', 'off/on', ...
-%             'Mapping', {'enum', 'off', 'on'}), ...
-%         audioPluginParameter ('stretching', ...
-%             'DisplayName', 'Stretching', ...
-%             'Label', 'off/on', ...
-%             'Mapping', {'enum', 'off', 'on'}), ...
-%         audioPluginParameter ('calcCents', ...
-%             'DisplayName', 'Calculate Cents', ...
-%             'Label', 'off/on', ...
-%             'Mapping', {'enum', 'off', 'on'}), ...
-%         audioPluginParameter ('cm', ...
-%             'DisplayName', 'Physical Damping', ...
-%             'Label', 'off/on', ...
-%             'Mapping', {'enum', 'off', 'on'}), ...
     end
     methods
-        function plugin = realTimePlateReverbPlugin        %<---
+        function plugin = realTimePlateReverbPlugin
             initialise (plugin);
         end 
         
         function initialise (plugin)
             % Create an vector including settings and in- and outputs
-                settings = [plugin.delModes plugin.square plugin.calcCents ...
-                           plugin.flanging plugin.physDamp plugin.flangeMatSize];
                 inOutputs = [plugin.p; plugin.qL; plugin.qR];
                 disp ('Initialising Plugin')
                 
-                % Obtain initial coefficients using the variables initialised above
-                % Note: always initialise with Lx = 2 and Ly = 1 so that flanging will work correctly
+                % Obtain initial coefficients
+                % Note: always initialise with Lx = 2 and Ly = 1 so that flanging will work correctly.
+                % If plugin.Lx or plugin.Ly is not 2 or 1 respectively, update loopvectors  
                 [plugin.coeffBdA, plugin.coeffCdA, plugin.coeffIndA, ...
                  plugin.omega, plugin.phiOutL, plugin.phiOutR, ...
                  plugin.phiOutMat, plugin.circXLength, plugin.rho, plugin.T60, ...
                  plugin.circX, plugin.circY]...
-                    = initPlate (2, 1, plugin.cents, ...
-                                 inOutputs, settings);
-                
+                    = initPlate (2, 1, 10.01 - plugin.cents, plugin.flangeMatSize, inOutputs);
                 plugin.qNext = zeros (length (plugin.omega (:, 1)), 1);
                 plugin.qNow = zeros (length (plugin.omega (:, 1)), 1);
                 plugin.qPrev = zeros (length (plugin.omega (:, 1)), 1);
@@ -173,8 +155,17 @@ classdef realTimePlateReverbPlugin < audioPlugin
                 plugin.lengthOmega = length (plugin.omega (:, 1));
                 disp (plugin.lengthOmega)
                 
+                % If the sliders are not what the coefficients were initialised with (Lx = 2, Ly = 1),
+                % wait with setting the init variable to false as the loopvectors need to be updated 
+                if (plugin.Lx == 2 && plugin.Ly == 1)
+                    plugin.init = false;
+                end
+                
                 % Set the init variable to false
-                plugin.init = false;
+                plugin.index = (1:plugin.lengthOmega)';
+                
+                plugin.wetnessLoop = plugin.wetness;
+                
         end
         function out = process (plugin, in)
             % Initialise the plugin
@@ -185,101 +176,116 @@ classdef realTimePlateReverbPlugin < audioPlugin
             
             % Initialise the stereo out-vector
             out = zeros (length (in), 2);
-            
-            % Initialise new variables 
-            qNextPre =         plugin.qNext;
-            qNowPre =          plugin.qNow;
-            qPrevPre =         plugin.qPrev;
-            coeffBdAPre =      plugin.coeffBdA;
-            coeffCdAPre =      plugin.coeffCdA;
-            coeffIndAPre =     plugin.coeffIndA;
-            
-            M = plugin.lengthOmega;
-            pLoop = plugin.p;
-            qLLoop = plugin.qL;
-            qRLoop = plugin.qR;
-            kSquared = (2e11 * plugin.h^2) / (12 * plugin.rho * (1 - 0.3^2));
-            k = 1 / 44100;
-            LxSmoothUse = plugin.Lxpre;
-            LySmoothUse = plugin.Lypre;
-            
-            sS = round (plugin.lengthOmega / 20);
+          
+            % If there is no change between the width & length sliders and the current width and length AND
+            % the init variable is false, retrieve the loopvectors directly from the plugin.
+            if plugin.Lx == plugin.curLx && plugin.Ly == plugin.curLy && plugin.init == false
+                qNextLoop =         plugin.qNext (plugin.index);
+                qNowLoop =          plugin.qNow (plugin.index);
+                qPrevLoop =         plugin.qPrev (plugin.index);
+                coeffBdALoop =      plugin.coeffBdA (plugin.index);
+                coeffCdALoop =      plugin.coeffCdA (plugin.index);
+                coeffIndALoop =     plugin.coeffIndA (plugin.index);
+                phiOutLLoop =       plugin.phiOutL (plugin.index);
+                phiOutRLoop =       plugin.phiOutR (plugin.index);
+            else
+            % Otherwise recalculate the loopvariables
+                % If the init variable is still true, this means that the plugin was re-initialised with Lx ~= 2 and Ly ~= 1
+                if plugin.init == true
+                    plugin.init = false;
+                end
+                % Copy the entire vectors
+                qNextPre =         plugin.qNext;
+                qNowPre =          plugin.qNow;
+                qPrevPre =         plugin.qPrev;
+                coeffBdAPre =      plugin.coeffBdA;
+                coeffCdAPre =      plugin.coeffCdA;
+                coeffIndAPre =     plugin.coeffIndA;
 
-            if abs (plugin.Lx - plugin.Lxpre) > 1 / sS
-                if round (LxSmoothUse * sS) / sS > round (plugin.Lx * sS) / sS
-                    LxSmoothUse = LxSmoothUse - 1 / sS;
+                M = plugin.lengthOmega;
+                pLoop = plugin.p;
+                qLLoop = plugin.qL;
+                qRLoop = plugin.qR;
+                kSquared = (2e11 * plugin.h^2) / (12 * plugin.rho * (1 - 0.3^2));
+                k = 1 / 44100;
+
+                sS = round (plugin.lengthOmega / 20);
+                if round (plugin.curLx * sS) / sS > round (plugin.Lx * sS) / sS
+                    plugin.curLx = plugin.curLx - 1 / sS;
                 else
-                    if round (LxSmoothUse * sS) / sS < round (plugin.Lx * sS) / sS
-                        LxSmoothUse = LxSmoothUse + 1 / sS;
+                    if round (plugin.curLx * sS) / sS < round (plugin.Lx * sS) / sS
+                        plugin.curLx = plugin.curLx + 1 / sS;
+                    else
+                        plugin.curLx = plugin.Lx;
                     end
                 end
-            else
-                LxSmoothUse = plugin.Lx;
-            end
 
-            if abs (plugin.Ly - plugin.Lypre) > 1 / sS
-                if round (LySmoothUse * sS) / sS > round (plugin.Ly * sS) / sS
-                    LySmoothUse = LySmoothUse - 1 / sS;
+                if round (plugin.curLy * sS) / sS > round (plugin.Ly * sS) / sS
+                    plugin.curLy = plugin.curLy - 1 / sS;
                 else
-                    if round (LySmoothUse * sS) / sS < round (plugin.Ly * sS) / sS
-                        LySmoothUse = LySmoothUse + 1 / sS;
+                    if round (plugin.curLy * sS) / sS < round (plugin.Ly * sS) / sS
+                        plugin.curLy = plugin.curLy + 1 / sS;
+                    else
+                        plugin.curLy = plugin.Ly;
                     end
                 end
-            else
-                LySmoothUse = plugin.Ly;
-            end
-            plugin.Lxpre = LxSmoothUse;
-            plugin.Lypre = LySmoothUse;
-            LxLoop = LxSmoothUse;
-            LyLoop = LySmoothUse;
-            omegaLoop = plugin.omega;
+                LxLoop = plugin.curLx;
+                LyLoop = plugin.curLy;
+                omegaLoop = plugin.omega;
 
-%             Disable stretching if flanging is true (for speed)
-            if plugin.stretchFlange == false && plugin.flanging == true
-                LxLoop = 2;
-                LyLoop = 1;
-            end
-            
-            phiOutLPre = zeros (M, 1);
-            phiOutRPre = zeros (M, 1);
-            coeffAPre = (1 / k^2) + ((12 .* (log(10) ./ 4)) / (plugin.rho * plugin.h * k));
-            coeffAPreAll = coeffAPre * plugin.rho * plugin.h;
+                phiOutLPre = zeros (M, 1);
+                phiOutRPre = zeros (M, 1);
+                coeffAPre = (1 / k^2) + ((12 .* (log(10) ./ 4)) / (plugin.rho * plugin.h * k));
+                coeffAPreAll = coeffAPre * plugin.rho * plugin.h;
 
-            % Update all coefficients that depend on the stretching of the plate
-            omegaLoop (:, 1)= ((omegaLoop (:, 2) / LxLoop).^2 + (omegaLoop (:, 3) / LyLoop).^2) * sqrt (kSquared) * pi^2;
-            coeffBdAPre (:, 1) = ((2 / k^2) - (omegaLoop (:, 1)).^2) ./ coeffAPre;
-            coeffIndAPre (:, 1) = (sin (omegaLoop (:, 2) * pi * pLoop (1)) .* sin (omegaLoop (:, 3) * pi * pLoop (2))) ./ coeffAPreAll;
-            phiOutLPre (:, 1) = sin (omegaLoop (:, 2) * pi * qLLoop (1)) .* sin (omegaLoop (:, 3) * pi * qLLoop (2));
-            phiOutRPre (:, 1) = sin (omegaLoop (:, 2) * pi * qRLoop (1)) .* sin (omegaLoop (:, 3) * pi * qRLoop (2));
+                % Update all coefficients that depend on the stretching of the plate
+                omegaLoop (:, 1)= ((omegaLoop (:, 2) / LxLoop).^2 + (omegaLoop (:, 3) / LyLoop).^2) * sqrt (kSquared) * pi^2;
+                coeffBdAPre (:, 1) = ((2 / k^2) - (omegaLoop (:, 1)).^2) ./ coeffAPre;
+                coeffIndAPre (:, 1) = (sin (omegaLoop (:, 2) * pi * pLoop (1)) .* sin (omegaLoop (:, 3) * pi * pLoop (2))) ./ coeffAPreAll;
+                phiOutLPre (:, 1) = sin (omegaLoop (:, 2) * pi * qLLoop (1)) .* sin (omegaLoop (:, 3) * pi * qLLoop (2));
+                phiOutRPre (:, 1) = sin (omegaLoop (:, 2) * pi * qRLoop (1)) .* sin (omegaLoop (:, 3) * pi * qRLoop (2));
 
 
-            % Make sure that eigenfrequencies that are higher than the stability condition (2*fs) are ignored
-            index = zeros (M, 1);
-            i = 1;
-            for m = 1 : M
-                if omegaLoop (m, 1) < 44100 * 2 
-                    index (i) = m;
-                    i = i + 1;
+                % Make sure that eigenfrequencies that are higher than the stability condition (2*fs) are ignored
+                plugin.index = zeros (M, 1);
+                i = 1;
+                for m = 1 : M
+                    if omegaLoop (m, 1) < 44100 * 2 
+                        plugin.index (i) = m;
+                        i = i + 1;
+                    end
                 end
-            end
-            index = index (1 : i - 1);
-            plugin.omega = omegaLoop;
+                plugin.index = plugin.index (1 : i - 1);
+                plugin.omega = omegaLoop;
 
-            % Update the loop variables
-            qNextLoop =      qNextPre (index);
-            qNowLoop =       qNowPre (index);
-            qPrevLoop =      qPrevPre (index);
-            coeffBdALoop =   coeffBdAPre (index);
-            coeffCdALoop =   coeffCdAPre (index);
-            coeffIndALoop =  coeffIndAPre (index);
-            phiOutLLoop =    phiOutLPre (index);
-            phiOutRLoop =    phiOutRPre (index);
+                % Update the loopvectors
+                qNextLoop =      qNextPre (plugin.index);
+                qNowLoop =       qNowPre (plugin.index);
+                qPrevLoop =      qPrevPre (plugin.index);
+                coeffBdALoop =   coeffBdAPre (plugin.index);
+                coeffCdALoop =   coeffCdAPre (plugin.index);
+                coeffIndALoop =  coeffIndAPre (plugin.index);
+                phiOutLLoop =    phiOutLPre (plugin.index);
+                phiOutRLoop =    phiOutRPre (plugin.index);
+            end
             
-            plugin.scaling = (LxLoop * LyLoop)^-0.25 * 50000; 
-                
-%             end
+            plugin.scaling = (plugin.curLx * plugin.curLy)^-0.25 * 150000; 
+
             % The value by which the flangeIndex will increment. Depends on the speed variable.   
-            flangeIncVal = (plugin.flangeMatSize / 44100) / (128 * (1 - log10 (plugin.speed) + (1 / 64)));
+%             flangeIncVal = (plugin.flangeMatSize / 44100) / (128 * (1 - log10 (plugin.speed * 10) + (1 / 64)));
+            flangeIncVal = (plugin.flangeMatSize / 44100) * plugin.speed^3;
+            
+            % if the difference between the previous wetness value and
+            % the current value, smooth out 
+            if round (plugin.wetnessLoop - plugin.wetness) > 1
+                plugin.wetnessLoop = plugin.wetnessLoop - 1;
+            else
+                if round (plugin.wetnessLoop - plugin.wetness) < -1
+                    plugin.wetnessLoop = plugin.wetnessLoop + 1;
+                else 
+                    plugin.wetnessLoop = plugin.wetness;
+                end
+            end
             
             % Update Equation
             for t = 1 : length(in)
@@ -289,57 +295,39 @@ classdef realTimePlateReverbPlugin < audioPlugin
                     qNextLoop = (coeffBdALoop .* qNowLoop + coeffCdALoop .* qPrevLoop + coeffIndALoop .* in (t - 1, 1));
                 end
 
-                
                 % If the flanging is turned on, find the correct vector from the phiOutPre matrices              
                 if plugin.flanging == true
-                    
                     plugin.flangeIdx = plugin.flangeIdx + flangeIncVal;
-                    
-                    if plugin.stretchFlange == true
-                        phiOutLLoop = plugin.phiOutMat (index, floor (mod (plugin.flangeIdx, plugin.circXLength) + 1));
-                        phiOutRLoop = plugin.phiOutMat (index, floor (mod (plugin.flangeIdx / 2, plugin.circXLength) + 1));
-                    else
-                        phiOutLLoop = plugin.phiOutMat (:, floor (mod (plugin.flangeIdx, plugin.circXLength) + 1));
-                        phiOutRLoop = plugin.phiOutMat (:, floor (mod (plugin.flangeIdx / 2, plugin.circXLength) + 1));
-                    end
-
+                    % Let the left microphone move twice as fast as the right microphone
+                    phiOutLLoop = plugin.phiOutMat (plugin.index, floor (mod (plugin.flangeIdx, plugin.circXLength) + 1));
+                    phiOutRLoop = plugin.phiOutMat (plugin.index, floor (mod (plugin.flangeIdx / 2, plugin.circXLength) + 1));
                 end
                 
-                out(t, 1) = plugin.wetness / 100 * plugin.scaling * sum (qNextLoop .* phiOutLLoop) ...
-                    + (1 - plugin.wetness / 100) * in (t, 1);
-                out(t, 2) = plugin.wetness / 100 * plugin.scaling * sum (qNextLoop .* phiOutRLoop) ...
-                    + (1 - plugin.wetness / 100) * in (t, 1);
+                out(t, 1) = plugin.wetnessLoop / 100 * plugin.scaling * sum (qNextLoop .* phiOutLLoop) ...
+                    + (1 - plugin.wetnessLoop / 100) * in (t, 1);
+                out(t, 2) = plugin.wetnessLoop / 100 * plugin.scaling * sum (qNextLoop .* phiOutRLoop) ...
+                    + (1 - plugin.wetnessLoop / 100) * in (t, 1);
 
                 qPrevLoop = qNowLoop;
                 qNowLoop = qNextLoop;
             end
-            
-%             disp(floor (mod ((curSamp + t), lengthCircX)));
-            
+
             % Set the first sample in the next buffer to the last sample in the current buffer
             plugin.samp = in (end);
             
-            % Save the QVectors for the next loop
-            plugin.qNext (index) =  qNextLoop;
-            plugin.qPrev (index) =  qPrevLoop;
-            plugin.qNow (index) =   qNowLoop;
-            
-           
-%             if mod (plugin.currentSample, 10 * length ( in (:, 1)))  < 10
-% %                 clf;
-% %                 hold on;
-%                 scatter ([plugin.circX(floor(mod(plugin.flangeIdx, lengthCircX) + 1)) plugin.circX(floor(mod(plugin.flangeIdx / 2, lengthCircX) + 1)) plugin.p(1)], ... 
-%                 [plugin.circY(floor(mod(plugin.flangeIdx, lengthCircX) + 1)) plugin.circY(floor(mod(plugin.flangeIdx / 2, lengthCircX) + 1)) plugin.p(2)]);            
-% %                 plot (plugin.circX, plugin.circY);
-%                 xlim ([0 1]);
-%                 ylim ([0 1]);
-%                 drawnow;
-%             end
+            % Save the vectors for the next loop
+            plugin.qNext (plugin.index) =       qNextLoop;
+            plugin.qPrev (plugin.index) =       qPrevLoop;
+            plugin.qNow (plugin.index) =        qNowLoop;
+            plugin.coeffBdA (plugin.index) =    coeffBdALoop;
+            plugin.coeffCdA (plugin.index) =    coeffCdALoop;
+            plugin.coeffIndA (plugin.index) =   coeffIndALoop;
+            plugin.phiOutL (plugin.index) =     phiOutLLoop;
+            plugin.phiOutR (plugin.index) =     phiOutRLoop;
+
         end
         
         function reset (plugin)
         end
-        
-        
     end
 end
