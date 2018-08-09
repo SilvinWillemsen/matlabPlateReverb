@@ -60,12 +60,12 @@ classdef realTimePlateReverbPlugin < audioPlugin
         phiOutR = zeros (2, 1);
         
         % Matrix to save all possible output coefficients for the flanging effect
-        flangeMatSize = 44100;
-        phiOutMat = zeros (1206, 44100);
+        flangeMatSize = 88200;
+        phiOutMat = zeros (1206, 88200);
         
         % X and Y positions for the dynamic outputs
-        circX = zeros (44100, 1);
-        circY = zeros (44100, 1);
+        circX = zeros (88200, 1);
+        circY = zeros (88200, 1);
 
         % QVectors used in the update equation
         qNext = zeros (2, 1);

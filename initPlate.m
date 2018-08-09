@@ -98,19 +98,17 @@ for m = 1:M
 end
 
 %% Set up Moving Outputs
-
 disp('Set up Moving Outputs')
-% outputPointsX = 0:1/(10000*Lx):1;
-% outputPointsY = 0:1/(10000*Ly):1;
-% outputPointsX = outputPointsX*Lx;
-% outputPointsY = outputPointsY*Ly;
 
-%set shape extremes
+% The parameters below (extremes and speeds) have been preset and can't be changed by the user.
+% These have been selected as having the best quality for the purpose of creating a flanging effect
+
+% Set shape extremes [-0.5 - 0.5]
 Rx = 0.4;
 Ry = 0.4;
 
-%set x and y speeds
-Sx = 4;
+% Set x and y speeds (Sx should be even, Sy odd)
+Sx = 2;
 Sy = 3;
 
 %Create possible output positions
