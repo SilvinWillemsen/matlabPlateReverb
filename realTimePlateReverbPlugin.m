@@ -30,8 +30,9 @@ classdef realTimePlateReverbPlugin < audioPlugin
            
         speed = 0.33;       % Speed of the flanging (Revolutions^-3 / s), [0.1 - 1]
         physDamp = false;   % Physical Damping [off/on]
-        flanging = true;    % Flanging [off/on]
+        flanging = false;    % Flanging [off/on]
         init = false;       % (Re)Initialise variables
+        
     end
     properties (Access = private)
         
@@ -47,8 +48,8 @@ classdef realTimePlateReverbPlugin < audioPlugin
         stretching = true;  % Plate stretching [off/on]
         lengthOmega = 2; % Number of eigenfrequencies
         omega = zeros (2, 3); % Eigenfrequencies. Col 1: frequency, 
-                                                  % Col 2, horizontal modal index,
-                                                  % Col 3, vertical modal index
+                                                % Col 2, horizontal modal index,
+                                                % Col 3, vertical modal index
         
         % Coefficients used in the update equation                                     
         coeffBdA = zeros (2, 1);
