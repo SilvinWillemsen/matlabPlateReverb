@@ -1,9 +1,6 @@
-function [coeffBdA, coeffCdA, coeffIndA, omega, phiOutL, phiOutR, phiOutFlange, circXLength, rho, cm, circX, circY] = initPlate (Lx, Ly, C, flangeMatSize, inOutputs)
-%% Set Global Variables
+function [coeffBdA, coeffCdA, coeffIndA, kSquared, omega, phiOutL, phiOutR, phiOutFlange, circXLength, circX, circY] = initPlate (Lx, Ly, C, rho, T60, h, flangeMatSize, inOutputs)
+
 fs = 44100;
-ca = 343; % Speed of sound in air
-pa = 1.225; % Air density
-decay = 4;
 
 %% Obtain in- and outputs
 p = inOutputs(1, :);
@@ -11,8 +8,6 @@ qL = inOutputs(2, :);
 qR = inOutputs(3, :);
 
 %% Set plate parameters (using values from the EMT 140 Plate Reverb)
-h = 0.0005; % Plate thickness (m)
-rho = 7850; % Material Density (kg/m^3)
 E = 2e11;   % Young's modulus
 v = 0.3;    % Poissons ratio
 kSquared = (E * h^2) / (12 * rho * (1 - v^2));
@@ -23,12 +18,14 @@ val = 0;
 m = 1;
 m1 = 1;
 m2 = 1;
-omega = zeros(100000,3);
+omega = zeros(18218, 3); % 18218 is the maximum number of modes
 
-while val < fs * 2
-    val = ((m1 / Lx)^2 + (m2 / Ly)^2) * sqrt (kSquared) * pi^2;
+% While the value of the eigenfrequency is smaller than the stability
+% condition of twice the sample rate, fill the matrix
+while val < fs * 2 
+    val = ((m1 / Lx)^2 + (m2 / Ly)^2) * sqrt(kSquared) * pi^2;
     
-    if val < fs*2
+    if val < fs * 2
         omega (m, 1) = val;
         omega (m, 2) = m1;
         omega (m, 3) = m2;
@@ -37,13 +34,17 @@ while val < fs * 2
     else
         m2 = 1;
         m1 = m1 + 1;
-        val = ((m1 / Lx)^2 + (m2 / Ly)^2) * sqrt (kSquared) * pi^2;  
+        val = ((m1 / Lx)^2 + (m2 / Ly)^2) * sqrt(kSquared) * pi^2;  
     end
 end
 omega = omega (1 : m - 1,:);
 
 %% Delete Neglegible Modes From Input
+% Modes that have a node at the input position can be neglected.
+
 disp('Delete neglegible modes from input')
+
+% Find which modes can be neglectd
 i1 = 1;
 answ1 = p(1);
 while rem(answ1,1) ~= 0 
@@ -58,6 +59,7 @@ while rem(answ2,1) ~= 0
     answ2 = p(2)*i2;
 end
 
+% Delete the modes from the vector
 n = 1;
 while n < length(omega(:,1))
     if mod(omega(n,2), i1) == 0 || mod(omega(n,3), i2) == 0
@@ -66,36 +68,33 @@ while n < length(omega(:,1))
         n = n + 1;
     end
 end
-%% Calculate Cents
-disp('Calculate Cents')
+
+%% Delete Perceptually Unimportant Modes
+disp('Delete Perceptually Unimportant Modes')
+
+% Sort the omega matrix according to the eigenfrequencies
 omega = sortrows (omega, 1);
 n = 1;
 omegaPrev = 0;
-%C = 0.1;
-%omega(:,4) = ones(length(omega(:,1)),1);
-index = [1:length(omega(:, 1))]';
-i = 1;
+
+% Set the first threshold
 ncent = nthroot(2, 12)^(C / 100) * (omega(1, 1) / (2 * pi)) - omega(1, 1) / (2 * pi);
-while n < length(omega(:,1))
+while n < length(omega(:, 1))
+    % If the difference in cents between two eigenfrequencies is smaller
+    % than the treshold, delete the mode.
     if omega(n, 1) / (2 * pi) - omegaPrev / (2 * pi) < ncent
         omega(n,:) = [];
-        index(n) = [];
     else
+    % Otherwise set a new threshold
         omegaPrev = omega(n, 1);
         n = n + 1;
         ncent = nthroot(2, 12)^(C / 100) * (omega(n, 1) / (2 * pi)) - omega(n, 1) / (2 * pi);
 
     end 
-    i = i + 1;
 end
-%omega = sortrows(omega,[2,3]);
 
-M = length(omega(:, 1));
-phiIn = zeros(M, 1);
-for m = 1:M
-    phiIn(m, 1) = (2 / (Lx * Ly)) * sin(omega(m, 2) * pi * p(1)) * sin(omega(m, 3) * pi * p(2));
-    %phiIn2(m,1) = (4/(Lx*Ly))*sin((omega(m,2)*pi*in2(1))/Lx)*sin((omega(m,3)*pi*in2(2))/Ly);
-end
+%% Create the Input Vector
+phiIn = (2 / (Lx * Ly)) * sin(omega(:, 2) * pi * p(1)) .* sin(omega(:, 3) * pi * p(2));
 
 %% Set up Moving Outputs
 disp('Set up Moving Outputs')
@@ -116,42 +115,16 @@ circX = Rx * sin (Sx * 2 * pi * (1 : 2 / (max([Lx Ly])) : (flangeMatSize)) / (fl
 circY = Ry * sin (Sy * 2 * pi * (1 : 2 / (max([Lx Ly])) : (flangeMatSize)) / (flangeMatSize) + 0.5 * pi) + 0.5;
 circXLength = length(circX);
 
-%% Create the Output Vector
-
-disp('Create PhiOut')
 phiOutFlange = sin (omega (:, 2) * pi * circX) .* sin (omega (:, 3) * pi * circY);    
 
+%% Create the Output Vector
 phiOutL = sin (omega (:, 2) * pi * qL(1)) .* sin (omega (:, 3) * pi * qL(2));
 phiOutR = sin (omega (:, 2) * pi * qR(1)) .* sin (omega (:, 3) * pi * qR(2));
 
-
-% %% Calculate thermoelastic damping
-% if useCm == true
-%     
-%     % Set thermal coefficients
-%     R1 = 4.94e-3;
-%     C1 = 2.98e-4;
-% 
-%     % Calculate damping coefficient
-%     n1 = (omega(:,1)*R1*C1) ./ ((omega(:,1).^2*h^2)+((C1^2)/(h^2)));
-%     alphaTH = (omega(:,1) / 2).*n1;
-% 
-%     %% Calculate Radiation Damping
-%     fc = (ca^2) / (2 * pi * sqrt (kSquared)); %calculate critical frecuency
-%     phiRad = sqrt ((omega (:, 1) / (2 * pi)) / fc); 
-%     g = ((1 - phiRad.^2) .* log ((1 + phiRad) ./ (1 - phiRad)) + 2 .* phiRad) ./ ((1 - phiRad.^2).^(3 / 2));
-%     alphaRadPre = (1 / (4 * pi^2)) * (ca * pa) / (rho * h) * ((2 * (Lx + Ly)) / (Lx * Ly)) * (ca / fc);
-%     alphaRad = alphaRadPre .* g;
-% 
-%     %% Calculate total damping
-%     alphaTot = alphaRad+alphaTH;
-%     T60 = 3 .* log(10) ./ alphaTot; % Reverberation time per mode
-%     cm = 12 .* (log(10) ./ T60); % Physical Damping
-% else
-    decayVector = zeros (length (omega (:,1)), 1);
-    decayVector (1 : length (omega (:,1)), 1) = decay;
-    cm = 12 .* (log(10) ./ decayVector); % Damping using a reverberation time of <decay> for all modes 
-% end
+%% Decay
+decayVector = zeros (length (omega (:,1)), 1);
+decayVector (1 : length (omega (:,1)), 1) = T60;
+cm = 12 .* (log(10) ./ decayVector); 
 
 %% Create coefficients In/A C/A and B/A used in the update equation
 k = 1 / fs;
